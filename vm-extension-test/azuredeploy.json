@@ -1,0 +1,184 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vmAdminUserName": {
+            "type": "string",
+            "minLength": 1
+        },
+        "vmAdminPassword": {
+            "type": "securestring"
+        },
+        "count": {
+            "type": "int",
+            "defaultValue": 10
+        }
+    },
+    "variables": {
+        "vhdstoreName": "[concat('vhdstore', uniqueString(resourceGroup().id))]",
+        "vmnetPrefix": "10.0.0.0/16",
+        "vmnetSubnet1Name": "Subnet-1",
+        "vmnetSubnet1Prefix": "10.0.0.0/24",
+        "vmnetSubnet2Name": "Subnet-2",
+        "vmnetSubnet2Prefix": "10.0.1.0/24",
+        "vmImagePublisher": "Canonical",
+        "vmImageOffer": "UbuntuServer",
+        "vmUbuntuOSVersion": "14.04.2-LTS",
+        "vmOSDiskName": "vmOSDisk",
+        "vmVmSize": "Standard_D1",
+        "vmVnetID": "[resourceId('Microsoft.Network/virtualNetworks', 'vmnet')]",
+        "vmSubnetRef": "[concat(variables('vmVnetID'), '/subnets/', variables('vmnetSubnet1Name'))]",
+        "vmStorageAccountContainerName": "vhds"
+    },
+    "resources": [
+        {
+            "name": "[variables('vhdstoreName')]",
+            "type": "Microsoft.Storage/storageAccounts",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-05-01-preview",
+            "dependsOn": [ ],
+            "tags": {
+                "displayName": "vhdstore"
+            },
+            "properties": {
+                "accountType": "Standard_LRS"
+            }
+        },
+        {
+            "name": "vmnet",
+            "type": "Microsoft.Network/virtualNetworks",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-05-01-preview",
+            "dependsOn": [ ],
+            "tags": {
+                "displayName": "vmnet"
+            },
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('vmnetPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('vmnetSubnet1Name')]",
+                        "properties": {
+                            "addressPrefix": "[variables('vmnetSubnet1Prefix')]"
+                        }
+                    },
+                    {
+                        "name": "[variables('vmnetSubnet2Name')]",
+                        "properties": {
+                            "addressPrefix": "[variables('vmnetSubnet2Prefix')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[concat('nic-',copyindex())]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-06-15",
+            "copy": {
+                "name": "nic copy",
+                "count": "[parameters('count')]"
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Network/virtualNetworks/', 'vmnet')]"
+            ],
+            "tags": {
+                "displayName": "vmNic"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[variables('vmSubnetRef')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "[concat('vm-',copyindex())]",
+            "type": "Microsoft.Compute/virtualMachines",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2015-06-15",
+            "copy": {
+                "name": "vm copy",
+                "count": "[parameters('count')]"
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Storage/storageAccounts/', variables('vhdstoreName'))]",
+                "[concat('Microsoft.Network/networkInterfaces/', 'nic-',copyindex())]"
+            ],
+            "tags": {
+                "displayName": "vm"
+            },
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[variables('vmVmSize')]"
+                },
+                "osProfile": {
+                    "computerName": "[concat('vm-',copyindex())]",
+                    "adminUsername": "[parameters('vmAdminUsername')]",
+                    "adminPassword": "[parameters('vmAdminPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "[variables('vmImagePublisher')]",
+                        "offer": "[variables('vmImageOffer')]",
+                        "sku": "[variables('vmUbuntuOSVersion')]",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "name": "vmOSDisk",
+                        "vhd": {
+                            "uri": "[concat('http://', variables('vhdstoreName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('vmOSDiskName'),copyindex(), '.vhd')]"
+                        },
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage"
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', concat('nic-',copyindex()))]"
+                        }
+                    ]
+                }
+            },
+            "resources": [
+                {
+                    "name": "vmext",
+                    "type": "extensions",
+                    "location": "[resourceGroup().location]",
+                    "apiVersion": "2015-06-15",
+                    "dependsOn": [
+                        "[concat('Microsoft.Compute/virtualMachines/', 'vm-',copyindex())]"
+                    ],
+                    "tags": {
+                        "displayName": "vmext"
+                    },
+                    "properties": {
+                        "publisher": "Microsoft.OSTCExtensions",
+                        "type": "CustomScriptForLinux",
+                        "typeHandlerVersion": "1.2",
+                        "autoUpgradeMinorVersion": true,
+                        "settings": {
+   
+                            "commandToExecute": "sleep 3500"
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "outputs": {
+    }
+}
